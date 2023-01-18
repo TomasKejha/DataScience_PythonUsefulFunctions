@@ -1,0 +1,485 @@
+PYTHON FUNCTIONS FOR EDA AND MLR
+
+
+UNIVARIATE ANALYSIS
+
+# Creating Unistats function
+
+def unistats(df):
+
+    import pandas as pd   
+
+    output_df = pd.DataFrame(columns=['Count', 'Missing', 'Unique', 'Dtype', 'Numeric', 'Mode',
+                                      'Mean','Min', '25%', 'Median', '75%', 'Max', 'Std', 'Skew', 'Kurt'])
+    
+    for col in df:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            output_df.loc[col] = [df[col].count(), df[col].isnull().sum(), df[col].nunique(), df[col].dtype, pd.api.types.is_numeric_dtype(df[col]),
+                                  df[col].mode().values[0], df[col].mean(), df[col].min(), df[col].quantile(0.25), df[col].median(),
+                                  df[col].quantile(0.75), df[col].max(), df[col].std(), df[col].skew(), df[col].kurt()]
+        else:
+            output_df.loc[col] = [df[col].count(), df[col].isnull().sum(), df[col].nunique(), df[col].dtype, pd.api.types.is_numeric_dtype(df[col]),
+                                  df[col].mode().values[0], '--','--', '--', '--', '--', '--', '--', '--', '--']
+            
+    return output_df.sort_values(by=['Numeric', 'Skew', 'Unique'], ascending=False)
+
+# pd.set_option('display.max_rows', 100)      # allows to display more rows and columns
+# pd.set_option('display.max_columns', 100)
+
+unistats(df)
+
+
+BIVARIATE ANALYSIS
+
+# Creating ANOVA function
+
+def anova(df, feature, label):
+    import pandas as pd
+    import numpy as np
+    from scipy import stats
+    
+    groups = df[feature].unique()       # to generate a list of the unique values in the categorical colum
+    
+    df_grouped = df.groupby(feature)    # to sort the dataframe by the current categorical column
+    
+    group_labels = []                   # to create an empty list-of-lists
+    
+    for g in groups:
+        g_list = df_grouped.get_group(g)     # to return a list contatining only the records for each uniqe values
+        
+        group_labels.append(g_list[label])   # to store the list of label values create in the prior step into our list-of-lists
+        
+    return stats.f_oneway(*group_labels)     # '*' sign is dinamically adding every group in a list of lists
+
+# Creating a function for Bivariate statistics (Correlation and ANOVA)
+
+def biostats(df, label):
+    from scipy import stats
+    import pandas as pd
+    import numpy as np
+    
+    output_df = pd.DataFrame(columns=['r', 'F', 'X2', 'p-value']) # creating an empty data frame to store output
+    
+    for col in df:
+        if not col == label:
+            if df[col].isnull().sum() == 0:  
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    r, p = stats.pearsonr(df[label], df[col])
+                    output_df.loc[col] = [round(r, 3), np.nan, np.nan, round(p, 3)] # NaN is better than 'dash' for inputing into model
+                else:
+                    F, p = anova(df[[col, label]], col, label)
+                    output_df.loc[col] = [np.nan, round(F, 3), np.nan, round(p, 3)]
+            else:
+                output_df.loc[col] = [np.nan, np.nan, np.nan, np.nan]
+
+    output_df = output_df.sort_values(by=['r', 'F'], ascending=False) # this does not sort by absolute value
+    
+   # output_df = output_df.reindex(output_df['r'].abs().sort_values(ascending=False).index) # using reindexing to sort by absolute values
+    
+    return output_df
+
+# pd.options.display.float_format = '{:.5f}'.format # changes scientific notation to numbers if we have many decimal points
+
+biostats(df, 'SalePrice')
+
+
+BIVARIATE ANALYSIS - VISUALISATIONS
+
+# function to check heteroskedasticity
+# high stats and low p-value means that we have a problem with heteroskedasticity
+
+def heteroskedasticity(df, feature, label):
+    from statsmodels.stats.diagnostic import het_breuschpagan
+    from statsmodels.stats.diagnostic import het_white
+    import pandas as pd
+    import statsmodels.api as sm
+    from statsmodels.formula.api import ols
+    
+    model = ols(formula=(label + '~' + feature), data=df).fit() # creating the model
+    
+    try: 
+        white_test = het_white(model.resid, model.model.exog)
+        output_df.loc['White'] = white_test
+    except:
+        print('Unable to run White test of heteroscedasticity')
+        
+    bp_test = het_white(model.resid, model.model.exog)
+    
+    output_df = pd.DataFrame(columns=['     LM stat', '     LM p-value', '     F-stat', '     F p-value'])
+    output_df.loc['Br-Pa'] = bp_test
+    
+    return output_df.round(3)
+
+# function for scatter plots with labels (lin. regression, skew, kurt, heteroskedasticity)
+# we have to keep track of the problematic features
+    # when we to MLR, we have to mark these problematic features
+
+def scatter(feature, label):
+    import seaborn as sns
+    from scipy import stats
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    
+    m, b, r, p, err = stats.linregress(feature, label) # calculating the regression line
+    
+    textstr = 'y = ' + str(round(m, 2)) + 'x + ' + str(round(b, 2)) + '\n'    # creating text for the chart
+    textstr += 'r^2 = ' + str(round(r**2, 2)) + '\n'
+    textstr += 'p = ' + str(round(p, 2)) + '\n''\n'
+    textstr += str(feature.name) + ' skew = ' + str(round(feature.skew(), 2)) + '\n'   # checking skewness for normal distribution
+    textstr += str(label.name) + ' skew = ' + str(round(label.skew(), 2)) + '\n''\n'
+    textstr += str(heteroskedasticity(pd.DataFrame(label).join(pd.DataFrame(feature)), feature.name, label.name))
+    
+    sns.set(color_codes=True)
+    ax = sns.jointplot(feature, label, kind='reg') # reg gives us KDE for histograms and regression line for scatterplot
+    ax.fig.text(1, 0.13, textstr, fontsize=12, transform=plt.gcf().transFigure)    # adds text to the chart
+    plt.show() # deletes the chart from the memory
+
+scatter(df['OverallQual'], df['SalePrice'])
+
+# function for bar plots with labels (ANOVA, Bonferroni correction)
+# when we have a feature consisting of many groups, we can recode it to only have 2 or so group
+    # reducing the number of values generated for the dummy codes
+    # we can combine the groups that are similar (similar bars with low spread)
+# the shorter the black line, the more reliable (lower spread)
+    # no line means that there is only one value (no variance (no spread))
+
+def bar_chart(df, feature, label):
+    import pandas as pd
+    from scipy import stats
+    from matplotlib import pyplot as plt
+    import seaborn as sns
+    
+    # same technique we learned in the biostats() function to dynamically enter multiple lists of label values for each categorical group (in ANOVA)
+    groups = df[feature].unique()
+    df_grouped = df.groupby(feature)
+    group_labels = []
+    for g in groups:
+        g_list = df_grouped.get_group(g)
+        group_labels.append(g_list[label])
+        
+    # calculate the ANOVA results
+    oneway = stats.f_oneway(*group_labels)
+    
+    # calculate t-test with Bonferroni correlation for p-value threshold
+    unique_groups = df[feature].unique()
+    ttests = []
+    
+    for i, group in enumerate(unique_groups):
+        for i2, group_2 in enumerate(unique_groups):
+            if i2 > i:
+                type_1 = df[df[feature] == group]
+                type_2 = df[df[feature] == group_2]
+                
+                # there must be more than 1 case per group to perform a t-test
+                if len(type_1[label]) < 2 or len(type_2[label]) < 2:
+                    print("'" + group + "' n = " + str(len(type_1)) + "; '" + group_2 + "' n = " + str(len(type_2)) + "; no t-test peformed")
+                else:
+                    t, p = stats.ttest_ind(type_1[label], type_2[label])
+                    ttests.append([group, group_2, t.round(4), p.round(4)])
+        
+    # Bonferroni-corrected p-value determined
+    if len(ttests) > 0: # avoid 'Divide by 0' error
+        p_threshold = 0.05 / len(ttests)
+    else:
+        p_threshold = 0.05
+    
+    # adding descriptive statistics to the diagram
+    textstr = '      ANOVA' + '\n'
+    textstr += 'F:          ' + str(oneway[0].round(2)) + '\n'
+    textstr += 'p-value:    ' + str(oneway[1].round(2)) + '\n\n'
+    textstr += 'Sig. comparisons (Bonferroni-corrected)' + '\n'
+    
+    # only significant ANOVA results for within groups will be showed
+    for ttest in ttests:
+        if ttest[3] <= p_threshold:
+            textstr += ttest[0] + '-' + ttest[1] + ': t = ' + str(ttest[2]) + ', p-value = ' + str(ttest[3]) + '\n'
+    
+    #fig, ax = plt.subplots(figsize=(2, 4)) # setting the size of the plot
+    
+    ax = sns.barplot(df[feature], df[label])
+    
+    ax.text(1, 0.1, textstr, fontsize=12, transform=plt.gcf().transFigure)
+    plt.show()
+    
+bar_chart(df, 'BldgType', 'SalePrice')
+
+# Creating a function for Bivariate statistics (Correlation and ANOVA)
+    # adding visualizations with label (Correlation, Skew, Kurt, heteroskedasticity) = scatter()
+    # adding visualizations with label (ANOVA, Bonferroni correction) = char_chart()
+
+def biostats(df, label):
+    from scipy import stats
+    import pandas as pd
+    import numpy as np
+    
+    output_df = pd.DataFrame(columns=['r', 'F', 'X2', 'p-value']) # creating an empty data frame to store output
+    
+    for col in df:
+        if not col == label:
+            if df[col].isnull().sum() == 0:  
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    r, p = stats.pearsonr(df[label], df[col])
+                    output_df.loc[col] = [round(r, 3), np.nan, np.nan, round(p, 3)] # NaN is better than 'dash' for inputing into model
+                    scatter(df[col], df[label]) # for adding visualization using the scatter function we have created
+                else:
+                    F, p = anova(df[[col, label]], col, label)
+                    output_df.loc[col] = [np.nan, round(F, 3), np.nan, round(p, 3)]
+                    bar_chart(df, col, label) # for adding visualization using bar_chart function we have created
+            else:
+                output_df.loc[col] = [np.nan, np.nan, np.nan, np.nan]
+
+    output_df = output_df.sort_values(by=['r', 'F'], ascending=False) # this does not sort by absolute value
+    
+   # output_df = output_df.reindex(output_df['r'].abs().sort_values(ascending=False).index) # using reindexing to sort by absolute values
+    
+    return output_df
+
+# pd.options.display.float_format = '{:.5f}'.format # changes scientific notation to numbers if we have many decimal points
+
+biostats(df, 'SalePrice')
+
+
+MULTIVARIET STATISTICS - MLR
+
+# MLR
+
+    # to get rid of scientific notations
+
+    # pd.options.display.float_format = '{:.8f}'.format # does not work, I have to fix it later
+
+    # setting up label
+
+    label = 'SalePrice'
+
+    # generating dummy variables
+
+    for col in df:
+        if not pd.api.types.is_numeric_dtype(df[col]):
+            df = df.join(pd.get_dummies(df[col], prefix=col, drop_first=False)) # joins a dataframe of dummies to the original dataframe
+        
+    # scalling
+
+    df = df.select_dtypes(np.number) # selects only numeric features
+
+    df_minmax = pd.DataFrame(preprocessing.MinMaxScaler().fit_transform(df), columns=df.columns) # we have to create new dataframe since
+                                                                                             # MinMaxScaler() destroys the current one
+
+    # setting X feature and y label    
+
+    y = df_minmax[label]
+
+    X = df_minmax.drop(columns=[label]).assign(const=1) # capital X because there are more features
+                                                        # assign for creating new column for MLR to work
+                                                        # we can come back here to drop features with low t-score later
+
+  # MLR
+        # we already dropped Null values so we do not need to care about it here
+
+    results = sm.OLS(y, X).fit()
+    results.summary()
+
+# sorting the results of MLR
+        # we need to create a dataframe to be able to sort
+
+    # pd.set_option('display.max_rows', 300)      # allows to display more rows and columns
+    # pd.set_option('display.max_columns', 300)
+    
+    df_features = pd.DataFrame({'coef':results.params, 't':abs(results.tvalues), 'p':results.pvalues})
+
+    df_features.sort_values(by=['t', 'p'])
+
+
+AUTOMATIC MLR
+
+# Prepare data for MLR
+    # generating dummy variables and performing scaling
+
+def mlr_prepare(df):
+    import numpy as np
+    import pandas as pd
+    from sklearn import preprocessing
+    
+    # generating dummies
+    
+    for col in df:
+        if not pd.api.types.is_numeric_dtype(df[col]):
+            df = df.join(pd.get_dummies(df[col], prefix=col, drop_first=False)) # joins a dataframe of dummies to the original dataframe
+        
+    # scalling
+
+    df = df.select_dtypes(np.number) # selects only numeric features
+    
+    df_minmax = pd.DataFrame(preprocessing.MinMaxScaler().fit_transform(df), columns=df.columns) # we have to create new dataframe since
+                                                                                                 # MinMaxScaler() destroys the current one
+    return df_minmax
+
+df = mlr_prepare(df)
+# df
+
+
+# Running MLR
+
+def mlr(df, label):
+    import numpy as np
+    import pandas as pd
+    import statsmodels.api as sm
+
+    # setting X feature and y label    
+
+    y = df[label]
+    
+    X = df.drop(columns=[label]).assign(const=1) # capital X because there are more features
+                                                 # assign=1 for creating new column for MLR to work
+                                                 # we can come back here to drop features with low t-score later
+
+    # MLR
+    # we already dropped Null values so we do not need to care about it here
+
+    results = sm.OLS(y, X).fit()
+    return results
+
+results = mlr(df, 'SalePrice')
+# results.summary()
+
+
+# generating dataframe that allows us to sort features by t and p values
+
+def mlr_feature_df(results):
+
+    df_features = pd.DataFrame({'coef':results.params, 't':abs(results.tvalues), 'p':results.pvalues})
+
+    df_features = df_features.drop(labels=['const'])
+    
+    df_features = df_features.sort_values(by=['t', 'p'])
+    
+    return df_features
+
+df_features =  mlr_feature_df(results)
+
+
+# fit statistics and record entry for the modeling results table
+
+def mlr_fit(results, actual, roundto=10): # actual is the actual y (the SalePrice column here)
+    import numpy as np
+    
+    df_features = mlr_feature_df(results) # generating feature table that allows sorting coef labels based of t and p
+                                           # function that we have created
+        
+    residuals = np.array(actual) - np.array(results.fittedvalues) # residual is the difference between prediction and truth (actual)
+    
+    rmse = np.sqrt(sum((residuals**2)) / len(actual)) # Root-mean-square deviation (rmse) formula
+                                                      # calculates the residual (difference between prediction
+                                                      # and truth (actual)) for each datapoint
+    
+    mae = np.mean(abs(np.array(actual) - np.array(results.fittedvalues))) # Mean absolute error (mae) formula
+                                                                          # the sum of absolute values divided by the sample size
+    
+    fit_stats = [round(results.rsquared, roundto), round(results.rsquared_adj, roundto),
+                 round(results.rsquared - results.rsquared_adj, roundto), round(rmse, roundto),
+                round(mae, roundto), [df_features.index.values]]
+    
+    return fit_stats
+
+fit_metrics_list = mlr_fit(results, df['SalePrice'])
+# fit_metrics_list
+
+
+# Control mlr and mlr_fit by removing a certain criterion of features at a time
+
+def mlr_step(df, label, min=2):
+    
+    # creating an empty model results table
+    
+    df_models = pd.DataFrame(columns=['R2', 'R2a', 'diff', 'RMSE', 'MAE', 'features'])
+    
+    # running the first model with all features
+    
+    results = mlr(df, label)
+    
+    # generating the fit statistics for the og model
+    
+    df_models.loc[str(len(results.params))] = mlr_fit(results, df[label], 10)
+    
+    # generating feature table that allows sorting coef laels based on t and p
+    
+    df_features = mlr_feature_df(results)
+    
+    # stepping through a series of reduced models until you
+    
+    while len(results.params) >= min:                  # keeping looping as long as there are at least a minimum number of features left
+        df = df.drop(columns=[df_features.index[0]])   # dropping the least effective feature (the feature on top)
+        results = mlr(df, label)                       # re-running the next MLR
+        df_features = mlr_feature_df(results)          # re-generating the features summary table
+        df_models.loc[len(results.params)] = mlr_fit(results, df[label], 10)    # re-generating the fit statistics for the og model
+        
+    # saving the full models table to csv
+    
+    df_models.to_csv('C:/Users/tomas/OneDrive/Plocha/EDA/HousingPrices/' + label + '.csv')
+    
+    # returning to display a shortened version without feature list
+    
+    df_models = df_models.drop(columns=['features'])
+    
+    return df_models
+
+# checking individual models
+
+df_models = mlr_step(df, 'SalePrice')
+df_models
+
+
+# DEALING WITH CATEGORICAL FEATURES WITH HIGH CARDINALITY (MANY GROUPS)
+
+from collections import Counter
+def cumulatively_categorise(column,threshold=0.75,return_categories_list=True):
+  #Find the threshold value using the percentage and number of instances in the column
+  threshold_value=int(threshold*len(column))
+  #Initialise an empty list for our new minimised categories
+  categories_list=[]
+  #Initialise a variable to calculate the sum of frequencies
+  s=0
+  #Create a counter dictionary of the form unique_value: frequency
+  counts=Counter(column)
+
+  #Loop through the category name and its corresponding frequency after sorting the categories by descending order of frequency
+  for i,j in counts.most_common():
+    #Add the frequency to the global sum
+    s+=dict(counts)[i]
+    #Append the category name to the list
+    categories_list.append(i)
+    #Check if the global sum has reached the threshold value, if so break the loop
+    if s>=threshold_value:
+      break
+  #Append the category Other to the list
+  categories_list.append('Other')
+
+  #Replace all instances not in our new categories by Other  
+  new_column=column.apply(lambda x: x if x in categories_list else 'Other')
+
+  #Return transformed column and unique values if return_categories=True
+  if(return_categories_list):
+    return new_column,categories_list
+  #Return only the transformed column if return_categories=False
+  else:
+    return new_column
+
+
+#Call the function with a default threshold of 75%
+transformed_column,new_category_list=cumulatively_categorise(data['Qualification'],return_categories_list=True)
+
+
+# CONFUSION MATRIX FOR TEST IN LOGISTIC REGRESSION
+
+def confusion_matrix(data, actual_values, model):
+    
+    pred_values = model.predict(data) # predict the values using the Logit model
+    
+    bins = np.array([0,0.5,1])
+    
+    cm = np.histogram2d(actual_values, pred_values, bins=bins)[0]
+    
+        # in the histogram, if values are between (0;0.5) they will be considered 0, and other 1
+        
+    accuracy = ((cm[0,0]+cm[1,1])/cm.sum())
+    
+    return cm, accuracy
